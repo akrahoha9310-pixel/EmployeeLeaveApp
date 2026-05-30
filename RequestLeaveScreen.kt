@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -20,6 +22,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,24 +35,37 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RequestLeaveScreen(
     onNavigateBack: () -> Unit,
-    onLeaveSubmitted: (Int) -> Unit // أضفنا هذا الحدث لإرسال عدد الأيام المخصومة
+    onLeaveSubmitted: (Int) -> Unit
 ) {
     val leaveTypes = listOf("إدارية", "مرضية", "طارئة", "وفاة", "دراسة")
     var selectedType by remember { mutableStateOf(leaveTypes[0]) }
     var expanded by remember { mutableStateOf(false) }
 
-    var startDate by remember { mutableStateOf("") }
-    var endDate by remember { mutableStateOf("") }
+    // متغيرات لحفظ التواريخ ككائنات LocalDate حقيقية
+    var startDate by remember { mutableStateOf(LocalDate.now()) }
+    var endDate by remember { mutableStateOf(LocalDate.now().plusDays(2)) } // افتراضياً بعد يومين
+
+    // متغيرات للتحكم بظهور نافذة التقويم المنبثقة لكل حقل
+    var showStartPicker by remember { mutableStateOf(false) }
+    var showEndPicker by remember { mutableStateOf(false) }
+
     var reason by remember { mutableStateOf("") }
     var attachmentName by remember { mutableStateOf("لم يتم اختيار ملف") }
 
     var errorMessage by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
+
+    val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
     Column(
         modifier = Modifier
@@ -101,27 +118,32 @@ fun RequestLeaveScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // حقول التواريخ الذكية المحمية من الكتابة اليدوية
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            OutlinedTextField(
-                value = startDate,
-                onValueChange = {
-                    startDate = it
-                    isError = false
-                },
-                label = { Text("من تاريخ") },
-                isError = isError && startDate.isEmpty(),
-                modifier = Modifier.weight(1f)
-            )
-            OutlinedTextField(
-                value = endDate,
-                onValueChange = {
-                    endDate = it
-                    isError = false
-                },
-                label = { Text("إلى تاريخ") },
-                isError = isError && endDate.isEmpty(),
-                modifier = Modifier.weight(1f)
-            )
+
+            // حقل من تاريخ
+            Box(modifier = Modifier.weight(1f)) {
+                OutlinedTextField(
+                    value = startDate.format(formatter),
+                    onValueChange = {},
+                    readOnly = true, // يمنع الكيبورد العام ويجبره على استخدام التقويم
+                    label = { Text("من تاريخ") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Box(modifier = Modifier.matchParentSize().clickable { showStartPicker = true })
+            }
+
+            // حقل إلى تاريخ
+            Box(modifier = Modifier.weight(1f)) {
+                OutlinedTextField(
+                    value = endDate.format(formatter),
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("إلى تاريخ") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Box(modifier = Modifier.matchParentSize().clickable { showEndPicker = true })
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -163,16 +185,19 @@ fun RequestLeaveScreen(
             }
             Button(
                 onClick = {
-                    if (startDate.isEmpty() || endDate.isEmpty()) {
+                    // الفحص المنطقي: هل تاريخ الانتهاء يسبق تاريخ البدء؟
+                    if (endDate.isBefore(startDate)) {
                         isError = true
-                        errorMessage = "⚠️ عذراً، يرجى ملء حقول التواريخ المطلوبة أولاً!"
+                        errorMessage = "⚠️ خطأ: لا يمكن لتاريخ الانتهاء أن يكون قبل تاريخ البدء!"
                     } else {
                         isError = false
-                        // محاكاة: نفترض برمجياً أن الموظف طلب إجازة مدتها "يومين" (2) ليتم خصمها عند الضغط
+                        // حساب فارق الأيام الحقيقي فوراً وبأمان كامل
+                        val daysBetween = ChronoUnit.DAYS.between(startDate, endDate).toInt() + 1
+
                         if (selectedType == "إدارية") {
-                            onLeaveSubmitted(2)
+                            onLeaveSubmitted(daysBetween)
                         } else {
-                            onNavigateBack() // الإجازات الأخرى "وفق الإثبات" لا نخصم منها عدداً ثابتاً حالياً
+                            onNavigateBack()
                         }
                     }
                 },
@@ -180,6 +205,58 @@ fun RequestLeaveScreen(
             ) {
                 Text("إرسال الطلب")
             }
+        }
+    }
+
+    // ==========================================
+    // 📅 منطق نافذة التقويم المنبثقة لحقل "من تاريخ"
+    // ==========================================
+    if (showStartPicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = startDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        )
+        DatePickerDialog(
+            onDismissRequest = { showStartPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        startDate = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
+                    }
+                    showStartPicker = false
+                    isError = false
+                }) { Text("موافق") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showStartPicker = false }) { Text("إلغاء") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+
+    // ==========================================
+    // 📅 منطق نافذة التقويم المنبثقة لحقل "إلى تاريخ"
+    // ==========================================
+    if (showEndPicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = endDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        )
+        DatePickerDialog(
+            onDismissRequest = { showEndPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        endDate = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
+                    }
+                    showEndPicker = false
+                    isError = false
+                }) { Text("موافق") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEndPicker = false }) { Text("إلغاء") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
         }
     }
 }
